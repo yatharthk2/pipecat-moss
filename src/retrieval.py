@@ -175,12 +175,14 @@ class MossRetrievalService(FrameProcessor):
 
             if (
                 latest_user_message
-                and not self._should_skip_query(latest_user_message)
+                and not (self._deduplicate_queries and self._last_query == latest_user_message)
             ):
                 search_result = await self.retrieve_documents(
                     latest_user_message, limit=self._max_documents
                 )
-                self._set_last_query(latest_user_message)
+
+                if self._deduplicate_queries:
+                    self._last_query = latest_user_message
 
                 documents = getattr(search_result, "docs", []) or []
                 if documents:
@@ -188,51 +190,16 @@ class MossRetrievalService(FrameProcessor):
                     role = "system" if self._add_as_system_message else "user"
                     context.add_message({"role": role, "content": content})
 
-            await self._emit_context(frame, messages, context)
+            if messages is not None:
+                await self.push_frame(LLMMessagesFrame(context.get_messages()))
+            elif isinstance(frame, (LLMContextFrame, OpenAILLMContextFrame)):
+                await self.push_frame(type(frame)(context=context))  # type: ignore[arg-type]
+            else:
+                await self.push_frame(frame)
 
         except Exception as exc:
             logger.exception(f"{self}: error while running retrieval: {exc}")
             await self.push_error(ErrorFrame(error=f"{self} retrieval error: {exc}"))
-
-    def _set_last_query(self, query: str):
-        """Update the last processed query to support deduplication.
-
-        Args:
-            query: The query string to store.
-        """
-        if self._deduplicate_queries:
-            self._last_query = query
-
-    def _should_skip_query(self, query: str) -> bool:
-        """Determine if the query should be skipped based on deduplication rules.
-
-        Args:
-            query: The candidate query string.
-
-        Returns:
-            True if the query should be skipped, False otherwise.
-        """
-        return bool(self._deduplicate_queries and self._last_query == query)
-
-    async def _emit_context(
-        self,
-        original_frame: Frame,
-        original_messages: Optional[List[Dict[str, Any]]],
-        context: LLMContext | OpenAILLMContext,
-    ):
-        """Emit the updated context or messages frame.
-
-        Args:
-            original_frame: The original frame received.
-            original_messages: The original messages list if present.
-            context: The updated LLM context object.
-        """
-        if original_messages is not None:
-            await self.push_frame(LLMMessagesFrame(context.get_messages()))
-        elif isinstance(original_frame, (LLMContextFrame, OpenAILLMContextFrame)):
-            await self.push_frame(type(original_frame)(context=context))  # type: ignore[arg-type]
-        else:
-            await self.push_frame(original_frame)
 
     @staticmethod
     def _get_latest_user_text(messages: Sequence[Dict[str, Any]]) -> Optional[str]:
