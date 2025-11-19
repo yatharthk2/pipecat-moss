@@ -49,7 +49,7 @@ class MossRetrievalService(FrameProcessor):
         project_id: Optional[str] = None,
         project_key: Optional[str] = None,
         top_k: int = 5,
-        system_prompt: str = "Here is additional context retrieved from memory:\n\n",
+        system_prompt: str = "Here is additional context retrieved from database:\n\n",
         **kwargs,
     ):
         """Initialize the Moss retrieval service.
