@@ -1,29 +1,29 @@
-# Using InferEdge Moss with Pipecat
+# InferEdge Moss Integration for Pipecat
 
-This guide explains how to integrate InferEdge Moss vector search with Pipecat to enable Retrieval-Augmented Generation (RAG) in your voice AI agents. The integration is authored and maintained by the Moss team (I work at Moss), so you can expect first-party support and regular updates as the platform evolves.
+This integration enables Retrieval-Augmented Generation (RAG) in your Pipecat voice AI agents using InferEdge Moss vector search. The integration is authored and maintained by the Moss team (I work at Moss), so you can expect first-party support and regular updates as the platform evolves.
 
 ## Pipecat Compatibility
 
-Tested with Pipecat v0.0.86. Please upgrade to this version (or newer) to ensure API compatibility with the snippets below.
+Tested with Pipecat v0.0.94. Please upgrade to this version (or newer) to ensure API compatibility with the snippets below.
 
 ## Overview
 
-Moss is a vector database service that enables semantic search over your documents. When integrated with Pipecat, it automatically retrieves relevant context from your knowledge base based on user queries and augments the LLM's context with this information.
+Moss is a vector database service that enables semantic search over your documents. When integrated with Pipecat, it automatically retrieves relevant context from your knowledge base based on user queries and augments the LLM's context with this information, enabling your voice AI agents to answer questions using your custom knowledge base.
 
 ## Installation
 
-First, install the required dependency:
+Install the package using uv:
 
 ```bash
-pip install inferedge-moss
+uv sync
 ```
 
 ## Prerequisites
 
 You'll need:
 
-1. A Moss project ID and project key
-2. An existing Moss index with documents
+1. A Moss project ID and project key (get them from [InferEdge Moss](https://inferedge.com))
+2. An existing Moss index with documents (or create one using the examples below)
 3. Your API keys for other services (LLM, STT, TTS)
 
 ### Setting Up Environment Variables
@@ -37,7 +37,7 @@ export MOSS_PROJECT_KEY="your-project-key"
 
 Or pass them directly when creating the client (see examples below).
 
-## Basic Usage
+## Quick Start
 
 ### 1. Creating a Moss Index (One-time Setup)
 
@@ -45,7 +45,7 @@ Before using Moss in your pipeline, you need to create an index and populate it 
 
 ```python
 import os
-from pipecat.services.moss import MossClient, DocumentInfo
+from src.client import MossClient, DocumentInfo
 
 # Initialize the client (reads from MOSS_PROJECT_ID and MOSS_PROJECT_KEY env vars)
 client = MossClient()
@@ -92,15 +92,16 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
-from pipecat.services.moss import MossClient
-from pipecat.services.moss.retrieval import MossRetrievalService
-from pipecat.services.retrieval_service import RetrievalService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.runner.utils import create_transport
 from pipecat.runner.types import RunnerArguments
+
+# Import Moss integration
+from src.client import MossClient
+from src.retrieval import MossRetrievalService, RetrievalService
 
 load_dotenv()
 
@@ -151,11 +152,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     context = OpenAILLMContext(messages)
     context_aggregator = llm.create_context_aggregator(context)
 
+    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
     # Build the pipeline
     # Note: retrieval service should be placed BEFORE the LLM
     pipeline = Pipeline(
         [
             transport.input(),
+            rtvi,
             stt,
             context_aggregator.user(),  # Collect user messages
             retrieval,  # Retrieve relevant documents
@@ -182,17 +186,20 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
 ## How to Run the Example
 
-1. **Install dependencies**
+1. **Create a `.env` file** that sets:
+   - `MOSS_PROJECT_ID` - Your Moss project ID
+   - `MOSS_PROJECT_KEY` - Your Moss project key
+   - `MOSS_INDEX_NAME` - (optional, defaults to your index name)
+   - `MOSS_TOP_K` - (optional, defaults to 5)
+   - `OPENAI_API_KEY` - Your OpenAI API key
+   - `DEEPGRAM_API_KEY` - Your Deepgram API key
+   - `CARTESIA_API_KEY` - Your Cartesia API key
+   - Any transport-specific keys (e.g., Daily)
+
+2. **Run the example**
 
    ```bash
-   pip install pipecat inferedge-moss python-dotenv loguru
-   ```
-
-2. **Create a `.env` file** that sets `MOSS_PROJECT_ID`, `MOSS_PROJECT_KEY`, `MOSS_INDEX_NAME` (optional, defaults to your index name), `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, and any transport-specific keys (e.g., Daily).
-3. **Run the example**
-
-   ```bash
-   python examples/foundational/49-moss-retrieval-demo.py
+   python examples/moss-retrieval-demo.py
    ```
 
    The script will start the Pipecat pipeline, verify Moss connectivity, stream STT into Moss-powered retrieval, and synthesize the LLM response with TTS.
@@ -213,6 +220,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 - `add_as_system_message` (default: True): Whether to add retrieved docs as a system message (vs user message)
 - `deduplicate_queries` (default: True): Skip retrieval if the query hasn't changed
 - `max_documents` (default: 5): Maximum number of documents to include in context
+- `max_document_chars` (default: 2000): Maximum characters per document (longer documents are truncated)
 
 ## Advanced Usage
 
@@ -221,9 +229,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 You can reuse a `MossClient` instance across multiple services:
 
 ```python
-from pipecat.services.moss import MossClient
-from pipecat.services.moss.retrieval import MossRetrievalService
-from pipecat.services.retrieval_service import RetrievalService
+from src.client import MossClient
+from src.retrieval import MossRetrievalService, RetrievalService
 
 # Create a shared client (reads from env vars by default)
 client = MossClient()
@@ -245,7 +252,7 @@ retrieval2 = MossRetrievalService(
 Use `MossClient` to manage your indexes:
 
 ```python
-from pipecat.services.moss import MossClient, DocumentInfo, AddDocumentsOptions
+from src.client import MossClient, DocumentInfo, AddDocumentsOptions
 
 client = MossClient()
 
@@ -355,12 +362,14 @@ The retrieval happens automatically for every user message, ensuring your LLM al
 ```python
 pipeline = Pipeline([
     transport.input(),
+    rtvi,
     stt,
     context_aggregator.user(),  # Collect user input
     retrieval,  # ← Must be before LLM
     llm,  # ← LLM receives augmented context
     tts,
     transport.output(),
+    context_aggregator.assistant(),  # Collect assistant messages
 ])
 ```
 
@@ -379,15 +388,16 @@ The service includes built-in error handling:
 3. **Top-K Tuning**: Adjust `top_k` based on your document size and query complexity
 4. **Metadata**: Use metadata to filter or provide context about document sources
 5. **Deduplication**: Keep `deduplicate_queries=True` to avoid redundant retrievals
+6. **Document Length**: Use `max_document_chars` to limit context size and prevent token overflow
 
 ## Troubleshooting
 
 ### Import Errors
 
-If you see `RuntimeError: inferedge-moss is required`, install it:
+If you see `RuntimeError: inferedge-moss is required`, install dependencies:
 
 ```bash
-pip install inferedge-moss
+uv sync
 ```
 
 ### Authentication Errors
@@ -410,9 +420,16 @@ export MOSS_PROJECT_KEY="your-project-key"
 - Adjust `top_k` to retrieve more/fewer documents
 - Improve document quality and formatting
 - Consider using better embedding models when creating the index
+- Check that your documents are properly indexed and loaded
 
-## See Also
+## License
 
-- [RetrievalService API Reference](../api/retrieval_service.md)
-- [MossClient API Reference](../api/moss_client.md)
-- [Pipecat Pipeline Documentation](../pipeline.md)
+This integration is provided under a permissive open source license (BSD-2 or equivalent).
+
+## Support
+
+This integration is maintained by the Moss team. For issues specific to this integration, please open an issue in this repository. For general Pipecat questions, join the [Pipecat Discord](https://discord.gg/pipecat).
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

@@ -18,7 +18,8 @@ from typing import Any, Dict, List, Optional, Sequence
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 
-from pipecat.frames.frames import ErrorFrame, Frame, LLMContextFrame, LLMMessagesFrame
+from pipecat.frames.frames import ErrorFrame, Frame, LLMContextFrame, LLMMessagesFrame, MetricsFrame
+from pipecat.metrics.metrics import ProcessingMetricsData, TTFBMetricsData
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from .client import MossClient
@@ -221,6 +222,31 @@ class MossRetrievalService(RetrievalService):
                 top_k=top_k,
                 auto_load=self._config.auto_load_index,
             )
+
+            if self.metrics_enabled:
+                time_taken = getattr(result, "time_taken_ms", None)
+                if time_taken is None and isinstance(result, dict):
+                    time_taken = result.get("time_taken_ms")
+
+                if time_taken is not None:
+                    logger.info(f"{self}: Retrieval latency: {time_taken}ms")
+                    await self.push_frame(
+                        MetricsFrame(
+                            data=[
+                                TTFBMetricsData(
+                                    processor=self.name,
+                                    value=time_taken / 1000.0,
+                                ),
+                                # Report as processing time as well for visibility in some dashboards
+                                ProcessingMetricsData(
+                                    processor=self.name,
+                                    value=time_taken / 1000.0,
+                                )
+                            ]
+                        )
+                    )
+                else:
+                    logger.warning(f"{self}: 'time_taken_ms' missing or None in result.")
         except Exception as e:
             logger.error(f"{self}: Moss retrieval failed: {e}")
             return []
