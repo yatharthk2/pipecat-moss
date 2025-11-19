@@ -233,11 +233,6 @@ class MossRetrievalService(RetrievalService):
                     await self.push_frame(
                         MetricsFrame(
                             data=[
-                                TTFBMetricsData(
-                                    processor=self.name,
-                                    value=time_taken / 1000.0,
-                                ),
-                                # Report as processing time as well for visibility in some dashboards
                                 ProcessingMetricsData(
                                     processor=self.name,
                                     value=time_taken / 1000.0,
