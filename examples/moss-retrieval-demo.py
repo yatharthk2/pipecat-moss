@@ -63,7 +63,11 @@ load_dotenv(override=True)
 
 
 def create_llm_service():
-    """Create LLM service with Azure OpenAI or regular OpenAI support."""
+    """Create LLM service with Azure OpenAI or regular OpenAI support.
+
+    Returns:
+        An instance of OpenAILLMService configured for either Azure or standard OpenAI.
+    """
     # Check for Azure OpenAI configuration
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     azure_api_key = os.getenv("AZURE_OPENAI_API_KEY") 
@@ -107,6 +111,12 @@ def create_llm_service():
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
+    """Run the customer support bot pipeline.
+
+    Args:
+        transport: The transport layer to use (e.g., Daily, WebRTC).
+        runner_args: Arguments for the pipeline runner.
+    """
     logger.info(f"Starting customer support bot")
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
@@ -208,7 +218,11 @@ When relevant knowledge base information is provided, use it to give accurate an
 
 
 async def bot(runner_args: RunnerArguments):
-    """Main bot entry point for the customer support bot."""
+    """Main bot entry point for the customer support bot.
+
+    Args:
+        runner_args: Command line arguments parsed by the runner.
+    """
 
     # Check required environment variables
     required_vars = ["DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "OPENAI_API_KEY"]

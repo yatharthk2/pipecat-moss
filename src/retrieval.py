@@ -36,7 +36,13 @@ __all__ = ["RetrievedDocument", "MossRetrievalService"]
 
 
 class RetrievedDocument(BaseModel):
-    """Container for normalized retrieval results."""
+    """Container for normalized retrieval results.
+
+    Parameters:
+        id: Unique identifier for the document.
+        text: The content text of the document.
+        metadata: Additional metadata associated with the document.
+    """
 
     id: Optional[str] = None
     text: str
@@ -44,7 +50,11 @@ class RetrievedDocument(BaseModel):
 
 
 class MossRetrievalService(FrameProcessor):
-    """Retrieval service backed by InferEdge Moss vector indexes."""
+    """Retrieval service backed by InferEdge Moss vector indexes.
+
+    Intercepts LLM context frames to augment them with relevant documents
+    retrieved from a Moss vector index based on the user's latest query.
+    """
 
     def __init__(
         self,
@@ -62,6 +72,29 @@ class MossRetrievalService(FrameProcessor):
         client: Optional[MossClient] = None,
         name: Optional[str] = None,
     ):
+        """Initialize the Moss retrieval service.
+
+        Args:
+            index_name: Name of the Moss index to query.
+            project_id: Moss project ID (optional if provided via env var).
+            project_key: Moss project key (optional if provided via env var).
+            top_k: Number of results to retrieve from the index. Defaults to 5.
+            auto_load_index: Whether to automatically load the index. Defaults to True.
+            system_prompt: Prefix text for the injected context.
+            add_as_system_message: If True, adds context as a system message.
+                If False, appends to the user message. Defaults to True.
+            deduplicate_queries: Whether to skip retrieval if the query matches
+                the previous one. Defaults to True.
+            max_documents: Maximum number of documents to include in context.
+                Defaults to 5.
+            max_document_chars: Maximum characters per document. None for no limit.
+                Defaults to 2000.
+            client: Existing MossClient instance. If None, creates a new one.
+            name: Optional name for the processor.
+
+        Raises:
+            ValueError: If index_name is not provided.
+        """
         super().__init__(name=name)
         if not index_name:
             raise ValueError("index_name must be provided")
@@ -82,11 +115,25 @@ class MossRetrievalService(FrameProcessor):
         self._last_query: Optional[str] = None
 
     def can_generate_metrics(self) -> bool:
+        """Check if the processor can generate metrics.
+
+        Returns:
+            True, as this processor generates retrieval latency metrics.
+        """
         return True
 
     async def retrieve_documents(
         self, query: str, *, limit: int
     ) -> Sequence[RetrievedDocument]:
+        """Retrieve and normalize documents for a given query.
+
+        Args:
+            query: The search query string.
+            limit: Maximum number of documents to return.
+
+        Returns:
+            A sequence of RetrievedDocument objects.
+        """
         top_k = min(self._top_k, limit)
         try:
             result = await self._client.query(
@@ -153,7 +200,12 @@ class MossRetrievalService(FrameProcessor):
             return []
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """Process frames to extract queries and augment LLM context with retrieved documents."""
+        """Process frames to extract queries and augment LLM context with retrieved documents.
+
+        Args:
+            frame: The frame to process.
+            direction: The direction of the frame flow.
+        """
         await super().process_frame(frame, direction)
 
         context = None
@@ -194,10 +246,23 @@ class MossRetrievalService(FrameProcessor):
             await self.push_error(ErrorFrame(error=f"{self} retrieval error: {exc}"))
 
     def _set_last_query(self, query: str):
+        """Update the last processed query to support deduplication.
+
+        Args:
+            query: The query string to store.
+        """
         if self._deduplicate_queries:
             self._last_query = query
 
     def _should_skip_query(self, query: str) -> bool:
+        """Determine if the query should be skipped based on deduplication rules.
+
+        Args:
+            query: The candidate query string.
+
+        Returns:
+            True if the query should be skipped, False otherwise.
+        """
         return bool(self._deduplicate_queries and self._last_query == query)
 
     async def _emit_context(
@@ -206,6 +271,13 @@ class MossRetrievalService(FrameProcessor):
         original_messages: Optional[List[Dict[str, Any]]],
         context: LLMContext | OpenAILLMContext,
     ):
+        """Emit the updated context or messages frame.
+
+        Args:
+            original_frame: The original frame received.
+            original_messages: The original messages list if present.
+            context: The updated LLM context object.
+        """
         if original_messages is not None:
             await self.push_frame(LLMMessagesFrame(context.get_messages()))
         elif isinstance(original_frame, (LLMContextFrame, OpenAILLMContextFrame)):
@@ -215,6 +287,14 @@ class MossRetrievalService(FrameProcessor):
 
     @staticmethod
     def _get_latest_user_text(messages: Sequence[Dict[str, Any]]) -> Optional[str]:
+        """Extract the text content from the latest user message.
+
+        Args:
+            messages: A sequence of message dictionaries.
+
+        Returns:
+            The text content of the last user message, or None if not found.
+        """
         for message in reversed(messages):
             if message.get("role") == "user":
                 content = message.get("content")
@@ -233,6 +313,14 @@ class MossRetrievalService(FrameProcessor):
         return None
 
     def _format_documents(self, documents: Sequence[RetrievedDocument]) -> str:
+        """Format retrieved documents into a single context string.
+
+        Args:
+            documents: Sequence of retrieved documents.
+
+        Returns:
+            A formatted string containing the system prompt and document contents.
+        """
         lines = [self._system_prompt.rstrip(), ""]
         for idx, document in enumerate(documents, start=1):
             suffix = ""

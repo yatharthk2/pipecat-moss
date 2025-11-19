@@ -50,13 +50,29 @@ __all__ = [
 
 
 class MossClient:
-    """Async helper around :mod:`inferedge_moss` tailored for Pipecat agents."""
+    """Async helper around :mod:`inferedge_moss` tailored for Pipecat agents.
+
+    Provides methods to manage indexes, documents, and perform semantic queries
+    using the Moss vector database.
+    """
 
     def __init__(
         self,
         project_id: Optional[str] = None,
         project_key: Optional[str] = None,
     ) -> None:
+        """Initialize the Moss client.
+
+        Args:
+            project_id: The Moss project identifier. If not provided, looks for
+                MOSS_PROJECT_ID environment variable.
+            project_key: The Moss project secret key. If not provided, looks for
+                MOSS_PROJECT_KEY environment variable.
+
+        Raises:
+            RuntimeError: If inferedge-moss is not installed.
+            ValueError: If project_id or project_key are missing.
+        """
         if _InferEdgeMossClient is None:
             raise RuntimeError(
                 "inferedge-moss is required to use MossClient. "
@@ -82,19 +98,31 @@ class MossClient:
 
     @property
     def project_id(self) -> str:
-        """Return the Moss project identifier used by this client."""
+        """Return the Moss project identifier used by this client.
+
+        Returns:
+            The project ID string.
+        """
 
         return self._project_id
 
     @property
     def project_key(self) -> str:
-        """Return the secret project key used for authenticating requests."""
+        """Return the secret project key used for authenticating requests.
+
+        Returns:
+            The project key string.
+        """
 
         return self._project_key
 
     @property
     def inner_client(self) -> Any:
-        """Expose the underlying InferEdge client for advanced use cases."""
+        """Expose the underlying InferEdge client for advanced use cases.
+
+        Returns:
+            The underlying inferedge_moss client instance.
+        """
 
         return self._client
 
@@ -103,7 +131,19 @@ class MossClient:
     async def create_index(
         self, index_name: str, documents: list[DocumentInfo], model_id: str
     ) -> bool:
-        """Create a new index and populate it with documents."""
+        """Create a new index and populate it with documents.
+
+        Args:
+            index_name: Name of the index to create.
+            documents: List of initial documents to index.
+            model_id: Identifier of the embedding model to use.
+
+        Returns:
+            True if the index was created successfully.
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("creating moss index", index=index_name, model=model_id)
         result = await self._client.create_index(index_name, documents, model_id)
@@ -112,7 +152,17 @@ class MossClient:
         return result
 
     async def get_index(self, index_name: str) -> IndexInfo:
-        """Get information about a specific index."""
+        """Get information about a specific index.
+
+        Args:
+            index_name: Name of the index to retrieve info for.
+
+        Returns:
+            Information about the requested index.
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("getting moss index", index=index_name)
         index_info = await self._client.get_index(index_name)
@@ -121,7 +171,14 @@ class MossClient:
         return index_info
 
     async def list_indexes(self) -> list[IndexInfo]:
-        """List all indexes with their information."""
+        """List all indexes with their information.
+
+        Returns:
+            A list of information objects for all available indexes.
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("listing moss indexes")
         indexes = await self._client.list_indexes()
@@ -130,7 +187,17 @@ class MossClient:
         return indexes
 
     async def delete_index(self, index_name: str) -> bool:
-        """Delete an index and all its data."""
+        """Delete an index and all its data.
+
+        Args:
+            index_name: Name of the index to delete.
+
+        Returns:
+            True if the index was deleted successfully.
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("deleting moss index", index=index_name)
         deleted = await self._client.delete_index(index_name)
@@ -143,7 +210,19 @@ class MossClient:
     async def add_documents(
         self, index_name: str, docs: list[DocumentInfo], options: AddDocumentsOptions | None
     ) -> dict[str, int]:
-        """Add or update documents in an index."""
+        """Add or update documents in an index.
+
+        Args:
+            index_name: Name of the target index.
+            docs: List of documents to add or update.
+            options: Optional configuration for the add operation.
+
+        Returns:
+            A dictionary mapping status strings to counts (e.g., {"added": 5}).
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("adding documents to moss index", index=index_name, count=len(docs))
         mapping = await self._client.add_docs(index_name, docs, options)
@@ -152,7 +231,18 @@ class MossClient:
         return mapping
 
     async def delete_docs(self, index_name: str, doc_ids: list[str]) -> dict[str, int]:
-        """Delete documents from an index by their IDs."""
+        """Delete documents from an index by their IDs.
+
+        Args:
+            index_name: Name of the target index.
+            doc_ids: List of document IDs to delete.
+
+        Returns:
+            A dictionary mapping status strings to counts.
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("deleting documents from moss index", index=index_name, count=len(doc_ids))
         mapping = await self._client.delete_docs(index_name, doc_ids)
@@ -165,7 +255,18 @@ class MossClient:
     async def get_docs(
         self, index_name: str, options: GetDocumentsOptions | None
     ) -> list[DocumentInfo]:
-        """Retrieve documents from an index."""
+        """Retrieve documents from an index.
+
+        Args:
+            index_name: Name of the target index.
+            options: Options specifying which documents to retrieve.
+
+        Returns:
+            A list of retrieved documents.
+
+        Raises:
+            TypeError: If the underlying client returns an unexpected type.
+        """
 
         logger.debug("retrieving documents from moss index", index=index_name)
         documents = await self._client.get_docs(index_name, options)
@@ -176,7 +277,14 @@ class MossClient:
     # ---------- Index loading & querying ----------
 
     async def load_index(self, index_name: str) -> str:
-        """Load an index from a local .moss file into memory."""
+        """Load an index from a local .moss file into memory.
+
+        Args:
+            index_name: Name of the index to load.
+
+        Returns:
+            A status string indicating the result of the load operation.
+        """
 
         logger.debug("loading moss index", index=index_name)
         result = await self._client.load_index(index_name)
@@ -191,7 +299,18 @@ class MossClient:
     async def query(
         self, index_name: str, query: str, top_k: int = 5, *, auto_load: bool = True
     ) -> SearchResult:
-        """Perform a semantic similarity search against the specified index."""
+        """Perform a semantic similarity search against the specified index.
+
+        Args:
+            index_name: Name of the index to query.
+            query: The search query text.
+            top_k: Number of top results to return. Defaults to 5.
+            auto_load: Whether to automatically load the index if not loaded.
+                Defaults to True.
+
+        Returns:
+            A SearchResult object containing the matching documents and metadata.
+        """
 
         if auto_load:
             await self.load_index(index_name)
