@@ -15,13 +15,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
-from pydantic import BaseModel, Field
 
 from pipecat.frames.frames import ErrorFrame, Frame, LLMContextFrame, LLMMessagesFrame, MetricsFrame
 from pipecat.metrics.metrics import ProcessingMetricsData
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from .client import MossClient
+from .client import MossClient, SearchResult
 
 try:
     from pipecat.processors.aggregators.openai_llm_context import (
@@ -32,21 +31,7 @@ except ImportError:  # pragma: no cover - optional dependency is always present 
     OpenAILLMContext = LLMContext  # type: ignore
     OpenAILLMContextFrame = LLMContextFrame  # type: ignore
 
-__all__ = ["RetrievedDocument", "MossRetrievalService"]
-
-
-class RetrievedDocument(BaseModel):
-    """Container for normalized retrieval results.
-
-    Parameters:
-        id: Unique identifier for the document.
-        text: The content text of the document.
-        metadata: Additional metadata associated with the document.
-    """
-
-    id: Optional[str] = None
-    text: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+__all__ = ["MossRetrievalService"]
 
 
 class MossRetrievalService(FrameProcessor):
@@ -124,80 +109,43 @@ class MossRetrievalService(FrameProcessor):
 
     async def retrieve_documents(
         self, query: str, *, limit: int
-    ) -> Sequence[RetrievedDocument]:
-        """Retrieve and normalize documents for a given query.
+    ) -> SearchResult:
+        """Retrieve documents for a given query.
 
         Args:
             query: The search query string.
             limit: Maximum number of documents to return.
 
         Returns:
-            A sequence of RetrievedDocument objects.
+            A SearchResult object containing the matching documents and metadata.
         """
         top_k = min(self._top_k, limit)
-        try:
-            result = await self._client.query(
-                self._index_name,
-                query,
-                top_k=top_k,
-                auto_load=self._auto_load_index,
-            )
+        result = await self._client.query(
+            self._index_name,
+            query,
+            top_k=top_k,
+            auto_load=self._auto_load_index,
+        )
 
-            if self.metrics_enabled:
-                time_taken = getattr(result, "time_taken_ms", None)
-                if time_taken is None and isinstance(result, dict):
-                    time_taken = result.get("time_taken_ms")
+        if self.metrics_enabled:
+            time_taken = getattr(result, "time_taken_ms", None)
+            if time_taken is None and isinstance(result, dict):
+                time_taken = result.get("time_taken_ms")
 
-                if time_taken is not None:
-                    logger.info(f"{self}: Retrieval latency: {time_taken}ms")
-                    await self.push_frame(
-                        MetricsFrame(
-                            data=[
-                                ProcessingMetricsData(
-                                    processor=self.name,
-                                    value=time_taken / 1000.0,
-                                )
-                            ]
-                        )
-                    )
-
-            docs = getattr(result, "docs", []) or []
-            documents = []
-
-            for item in docs:
-                # Handle both dict-like and object-like items
-                is_dict = isinstance(item, dict)
-                get_val = lambda k: item.get(k) if is_dict else getattr(item, k, None)
-
-                text = get_val("text") or get_val("content") or get_val("chunk_text")
-                if not text or not isinstance(text, str):
-                    continue
-
-                metadata = get_val("metadata") or {}
-                if not isinstance(metadata, dict):
-                    metadata = {}
-
-                # Lift score/source into metadata if present at top level
-                if (score := get_val("score")) is not None:
-                    metadata["score"] = score
-                if source := get_val("source"):
-                    metadata["source"] = source
-
-                doc_id = get_val("id") or get_val("doc_id")
-
-                documents.append(
-                    RetrievedDocument(
-                        id=str(doc_id) if doc_id else None,
-                        text=text.strip(),
-                        metadata=metadata,
+            if time_taken is not None:
+                logger.info(f"{self}: Retrieval latency: {time_taken}ms")
+                await self.push_frame(
+                    MetricsFrame(
+                        data=[
+                            ProcessingMetricsData(
+                                processor=self.name,
+                                value=time_taken / 1000.0,
+                            )
+                        ]
                     )
                 )
 
-            return documents[:limit]
-
-        except Exception as e:
-            logger.error(f"{self}: Moss retrieval failed: {e}")
-            return []
+        return result
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Process frames to extract queries and augment LLM context with retrieved documents.
@@ -229,11 +177,12 @@ class MossRetrievalService(FrameProcessor):
                 latest_user_message
                 and not self._should_skip_query(latest_user_message)
             ):
-                documents = await self.retrieve_documents(
+                search_result = await self.retrieve_documents(
                     latest_user_message, limit=self._max_documents
                 )
                 self._set_last_query(latest_user_message)
 
+                documents = getattr(search_result, "docs", []) or []
                 if documents:
                     content = self._format_documents(documents)
                     role = "system" if self._add_as_system_message else "user"
@@ -312,7 +261,7 @@ class MossRetrievalService(FrameProcessor):
                         return "\n".join(parts).strip() or None
         return None
 
-    def _format_documents(self, documents: Sequence[RetrievedDocument]) -> str:
+    def _format_documents(self, documents: Sequence[Any]) -> str:
         """Format retrieved documents into a single context string.
 
         Args:
@@ -324,18 +273,26 @@ class MossRetrievalService(FrameProcessor):
         lines = [self._system_prompt.rstrip(), ""]
         for idx, document in enumerate(documents, start=1):
             suffix = ""
-            if document.metadata:
-                extras = []
-                if source := (
-                    document.metadata.get("source") or document.metadata.get("origin")
-                ):
-                    extras.append(f"source={source}")
-                if (score := document.metadata.get("score")) is not None:
-                    extras.append(f"score={score}")
-                if extras:
-                    suffix = f" ({', '.join(extras)})"
+            extras = []
 
-            text = document.text
+            # Handle metadata (which might be None or dict-like)
+            metadata = getattr(document, "metadata", None) or {}
+
+            if source := metadata.get("source") or metadata.get("origin"):
+                extras.append(f"source={source}")
+
+            # Check for score at top level (Rust struct) then metadata
+            score = getattr(document, "score", None)
+            if score is None:
+                score = metadata.get("score")
+
+            if score is not None:
+                extras.append(f"score={score}")
+
+            if extras:
+                suffix = f" ({', '.join(extras)})"
+
+            text = getattr(document, "text", "")
             limit = self._max_document_chars
             if limit and len(text) > limit:
                 text = f"{text[:limit].rstrip()}…"
